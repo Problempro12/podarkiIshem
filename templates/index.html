@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Gift Finder</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-800 mb-4">Telegram Gift Finder</h1>
+            <p class="text-gray-600">Найдите пользователей с определенными подарками в Telegram</p>
+        </header>
+
+        <!-- Auth Form -->
+        <div id="auth-form" class="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-semibold mb-6">Авторизация Telegram</h2>
+            <div id="auth-status" class="mb-4"></div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-gray-700 mb-2">API ID</label>
+                    <input type="text" id="api-id" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="Введите API ID">
+                </div>
+                
+                <div>
+                    <label class="block text-gray-700 mb-2">API Hash</label>
+                    <input type="text" id="api-hash" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="Введите API Hash">
+                </div>
+                
+                <div>
+                    <label class="block text-gray-700 mb-2">Номер телефона</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="phone" class="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="+79001234567">
+                        <button id="send-code" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-200">
+                            Отправить код
+                        </button>
+                    </div>
+                </div>
+                
+                <div>
+                    <label class="block text-gray-700 mb-2">Код подтверждения</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="code" class="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="Введите код">
+                        <button id="submit-code" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-200">
+                            Подтвердить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Password Modal -->
+        <div id="password-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+                <h2 class="text-2xl font-semibold mb-4">Введите пароль</h2>
+                <div id="password-status" class="mb-4"></div>
+                <div class="space-y-4">
+                    <input type="password" id="password" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="Введите пароль 2FA">
+                    <button id="submit-password" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition duration-200">
+                        Подтвердить
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div id="main-content" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- User Search -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-semibold mb-4">Поиск по пользователю</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-gray-700 mb-2">Username</label>
+                            <input type="text" id="username" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="@username">
+                        </div>
+                        <div>
+                            <label class="block text-gray-700 mb-2">Подарок</label>
+                            <select id="userGift" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500">
+                                <option value="0">Все подарки</option>
+                            </select>
+                        </div>
+                        <button onclick="checkUser()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition duration-200">
+                            Найти
+                        </button>
+                    </div>
+                    <div id="userResults" class="mt-6"></div>
+                </div>
+
+                <!-- Group Search -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-semibold mb-4">Поиск по группе</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-gray-700 mb-2">ID группы или ссылка</label>
+                            <input type="text" id="groupId" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" placeholder="-1001234567890 или t.me/group">
+                        </div>
+                        <div>
+                            <label class="block text-gray-700 mb-2">Подарок</label>
+                            <select id="groupGift" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500">
+                                <option value="0">Все подарки</option>
+                            </select>
+                        </div>
+                        <button onclick="checkGroup()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition duration-200">
+                            Найти
+                        </button>
+                    </div>
+                    <div id="groupResults" class="mt-6"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+                <p class="mt-4 text-gray-700">Поиск...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html> 
