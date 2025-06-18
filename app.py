@@ -12,6 +12,9 @@ from telethon.tl.functions.auth import SendCodeRequest
 from telethon.tl.types import CodeSettings
 import subprocess
 import sys
+from telethon.errors import FloodWaitError
+from telethon.errors.rpcerrorlist import SessionPasswordNeededError
+from telethon.errors import PhoneCodeInvalidError, PhoneCodeExpiredError
 
 # Настройка логирования
 logging.basicConfig(
@@ -38,6 +41,7 @@ auth_code_event = asyncio.Event()
 auth_code = None
 
 async def init_client():
+    """Инициализация клиента Telegram"""
     global client
     if client is None:
         logger.info("Initializing new Telegram client...")
@@ -45,14 +49,13 @@ async def init_client():
         await client.connect()
         logger.info("Telegram client connected")
         
-        # Проверяем авторизацию
+        # Проверяем статус авторизации
         is_authorized = await client.is_user_authorized()
         logger.info(f"Client authorization status: {is_authorized}")
         
         if not is_authorized:
             logger.info("Client is not authorized, will need to start auth process")
-        else:
-            logger.info("Client is already authorized")
+    return client
 
 async def start_client():
     global client, auth_code_event, auth_code
@@ -164,53 +167,6 @@ async def auth_status():
 async def auth_start():
     try:
         logger.info("Starting auth process...")
-        await init_client()
-        
-        if not await client.is_user_authorized():
-            logger.info("User not authorized, starting auth process...")
-            try:
-                # Запускаем auth.py как отдельный процесс
-                logger.info("Starting auth.py process...")
-                process = subprocess.Popen([sys.executable, 'auth.py'], 
-                                        stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE,
-                                        text=True)
-                
-                # Ждем завершения процесса
-                stdout, stderr = process.communicate()
-                
-                if process.returncode == 0:
-                    logger.info("Auth process completed successfully")
-                    return jsonify({'status': 'code_sent'})
-                else:
-                    logger.error(f"Auth process failed: {stderr}")
-                    # Удаляем файл сессии в случае ошибки
-                    session_file = 'telegram_session.session'
-                    if os.path.exists(session_file):
-                        os.remove(session_file)
-                    return jsonify({'error': f'Ошибка при авторизации: {stderr}'}), 500
-            except Exception as e:
-                logger.error(f"Error during auth process: {str(e)}", exc_info=True)
-                # Удаляем файл сессии в случае ошибки
-                session_file = 'telegram_session.session'
-                if os.path.exists(session_file):
-                    os.remove(session_file)
-                return jsonify({'error': f'Ошибка при авторизации: {str(e)}'}), 500
-        else:
-            logger.info("User already authorized")
-            return jsonify({'status': 'already_authorized'})
-    except Exception as e:
-        logger.error(f"Auth start error: {str(e)}", exc_info=True)
-        # Удаляем файл сессии в случае ошибки
-        session_file = 'telegram_session.session'
-        if os.path.exists(session_file):
-            os.remove(session_file)
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/auth/code', methods=['POST'])
-async def auth_code():
-    logger.info("Received code request")
-    try:
         data = request.json
         logger.info(f"Request data: {data}")
         
@@ -218,37 +174,87 @@ async def auth_code():
             logger.warning("No JSON data in request")
             return jsonify({'error': 'No data provided'}), 400
             
-        code = data.get('code')
-        logger.info(f"Code from request: {code}")
+        api_id = data.get('api_id')
+        api_hash = data.get('api_hash')
+        phone = data.get('phone')
         
-        if not code:
-            logger.warning("Code not provided in request")
-            return jsonify({'error': 'Code is required'}), 400
+        if not api_id or not api_hash or not phone:
+            logger.warning("Missing required fields")
+            return jsonify({'error': 'API ID, API Hash и номер телефона обязательны'}), 400
             
-        logger.info(f"Attempting to sign in with code: {code}")
-        await init_client()
+        logger.info(f"Using API ID: {api_id}, phone: {phone}")
+        
+        # Создаем нового клиента с переданными данными
+        global client
+        client = TelegramClient('telegram_session', api_id, api_hash)
+        await client.connect()
+        logger.info("Telegram client connected")
+        
+        if await client.is_user_authorized():
+            logger.info("User is already authorized")
+            return jsonify({'status': 'already_authorized'})
+            
+        logger.info("User not authorized, starting auth process...")
         
         try:
-            # Используем client.start() вместо прямого sign_in()
-            logger.info("Calling client.start()...")
-            await client.start(phone=PHONE, code=code)
-            logger.info("Successfully signed in with code")
+            # Отправляем код
+            await client.send_code_request(phone)
+            logger.info("Code sent successfully")
+            return jsonify({'status': 'code_sent'})
+        except FloodWaitError as e:
+            wait_time = e.seconds
+            hours = wait_time // 3600
+            minutes = (wait_time % 3600) // 60
+            error_msg = f'Слишком много попыток. Пожалуйста, подождите {hours} ч. {minutes} мин. перед следующей попыткой.'
+            logger.warning(f"FloodWaitError: {error_msg}")
+            return jsonify({'error': error_msg}), 429
             
-            # Сохраняем сессию
-            await client.save_session()
-            return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Auth start error: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/code', methods=['POST'])
+async def auth_code():
+    try:
+        logger.info("Received code request")
+        data = request.json
+        logger.info(f"Request data: {data}")
+        
+        if not data or 'code' not in data:
+            logger.warning("No code provided in request")
+            return jsonify({'error': 'Код не указан'}), 400
+            
+        code = data['code']
+        logger.info(f"Code from request: {code}")
+        
+        if not client:
+            logger.error("Client not initialized")
+            return jsonify({'error': 'Клиент не инициализирован'}), 500
+            
+        try:
+            logger.info(f"Attempting to sign in with code: {code}")
+            # Добавляем таймаут для операции
+            try:
+                await asyncio.wait_for(client.sign_in(code=code), timeout=30)
+                logger.info("Successfully signed in with code")
+                return jsonify({'status': 'success'})
+            except asyncio.TimeoutError:
+                logger.error("Sign in operation timed out")
+                return jsonify({'error': 'Превышено время ожидания ответа от Telegram'}), 408
                 
+        except SessionPasswordNeededError:
+            logger.info("2FA password required")
+            return jsonify({'status': 'password_required'})
+        except PhoneCodeInvalidError:
+            logger.error("Invalid phone code")
+            return jsonify({'error': 'Неверный код подтверждения'}), 400
+        except PhoneCodeExpiredError:
+            logger.error("Phone code expired")
+            return jsonify({'error': 'Срок действия кода истек'}), 400
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Code sign in error: {error_msg}", exc_info=True)
+            logger.error(f"Code sign in error: {str(e)}", exc_info=True)
+            return jsonify({'error': f'Ошибка при вводе кода: {str(e)}'}), 400
             
-            if 'password' in error_msg.lower():
-                logger.info("Password required")
-                return jsonify({'status': 'password_required'})
-            elif 'code' in error_msg.lower():
-                return jsonify({'error': 'Неверный код подтверждения'}), 400
-            else:
-                return jsonify({'error': f'Ошибка при вводе кода: {error_msg}'}), 500
     except Exception as e:
         logger.error(f"Auth code error: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
@@ -272,12 +278,11 @@ async def auth_password():
             return jsonify({'error': 'Password is required'}), 400
             
         logger.info("Attempting to sign in with password...")
-        await init_client()
         
         try:
-            # Используем client.start() вместо прямого sign_in()
+            # Используем client.start() для авторизации с паролем
             logger.info("Calling client.start() with password...")
-            await client.start(phone=PHONE, password=password)
+            await client.start(password=password)
             logger.info("Successfully signed in with password")
             
             # Сохраняем сессию

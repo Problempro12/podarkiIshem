@@ -247,6 +247,7 @@ async function sendCode() {
     }
 
     try {
+        console.log('Sending code request...');
         const response = await fetch('http://localhost:8080/api/auth/start', {
             method: 'POST',
             headers: {
@@ -260,10 +261,13 @@ async function sendCode() {
         });
         
         const data = await response.json();
+        console.log('Server response:', data);
         
         if (data.status === 'code_sent') {
             document.getElementById('send-code').disabled = true;
             document.getElementById('code').focus();
+        } else if (data.status === 'already_authorized') {
+            showSearchForm();
         } else {
             showError(data.error || 'Ошибка при отправке кода');
         }
